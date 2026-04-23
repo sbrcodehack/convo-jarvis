@@ -1,0 +1,27 @@
+body {
+  background: black;
+  color: #00f7ff;
+  font-family: Arial;
+  text-align: center;
+}
+
+.container {
+  padding: 20px;
+}
+
+button {
+  background: #00f7ff;
+  color: black;
+  border: none;
+  padding: 10px;
+  margin: 5px;
+  cursor: pointer;
+}
+
+#transcript, #summary {
+  border: 1px solid #00f7ff;
+  padding: 10px;
+  height: 150px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
