@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ConvoJarvis</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+  <h1>🧠 ConvoJarvis</h1>
+
+  <div id="status">Status: Idle</div>
+
+  <button onclick="startListening()">🎤 Start Listening</button>
+  <button onclick="stopListening()">⛔ Stop</button>
+  <button onclick="generateSummary()">📊 Generate Summary</button>
+
+  <h3>Live Transcript:</h3>
+  <div id="transcript"></div>
+
+  <h3>Daily Summary:</h3>
+  <div id="summary"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
