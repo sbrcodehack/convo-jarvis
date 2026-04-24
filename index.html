@@ -2,9 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>ConvoJarvis - Human Voice Recorder</title>
+  <title>ConvoJarvis - Working Version</title>
 
-  <!-- Style -->
   <style>
     body {
       background: black;
@@ -13,58 +12,41 @@
       text-align: center;
     }
 
-    .container {
-      padding: 20px;
-    }
-
     button {
-      background: #00f7ff;
-      color: black;
-      border: none;
       padding: 12px 20px;
       margin: 10px;
-      cursor: pointer;
       font-size: 16px;
+      background: #00f7ff;
+      border: none;
+      cursor: pointer;
     }
 
     #status {
-      font-size: 20px;
-      margin: 10px;
+      font-size: 22px;
+      margin: 15px;
     }
 
-    #recordings audio {
+    audio {
       display: block;
       margin: 10px auto;
     }
-
-    .box {
-      border: 1px solid #00f7ff;
-      padding: 10px;
-      margin-top: 15px;
-    }
   </style>
 
-  <!-- 🔥 VAD Library -->
-  <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web/dist/vad.min.js"></script>
+  <!-- ✅ Stable VAD CDN -->
+  <script src="https://unpkg.com/@ricky0123/vad-web/dist/vad.min.js"></script>
 </head>
-
 <body>
 
-<div class="container">
-  <h1>🧠 ConvoJarvis</h1>
+<h1>🧠 ConvoJarvis</h1>
 
-  <button onclick="startListening()">🎤 Start Listening</button>
-  <button onclick="stopListening()">⛔ Stop</button>
+<button onclick="start()">🎤 Start</button>
+<button onclick="stop()">⛔ Stop</button>
 
-  <div id="status">Status: Idle</div>
+<div id="status">Idle</div>
 
-  <div class="box">
-    <h3>Saved Voice Chunks (Auto every 2 min)</h3>
-    <div id="recordings"></div>
-  </div>
-</div>
+<h3>Saved Recordings</h3>
+<div id="recordings"></div>
 
-<!-- App Logic -->
 <script src="app.js"></script>
 
 </body>
