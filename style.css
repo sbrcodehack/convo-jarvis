@@ -14,14 +14,16 @@ button {
   color: black;
   border: none;
   padding: 10px;
-  margin: 5px;
+  margin: 10px;
   cursor: pointer;
 }
 
-#transcript, #summary {
-  border: 1px solid #00f7ff;
-  padding: 10px;
-  height: 150px;
-  overflow-y: auto;
-  margin-top: 10px;
+#status, #volume {
+  margin: 10px;
+  font-size: 20px;
+}
+
+audio {
+  display: block;
+  margin: 10px auto;
 }
