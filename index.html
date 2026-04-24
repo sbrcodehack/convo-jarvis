@@ -1,33 +1,188 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Working VAD Test</title>
-  <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/index.min.js"></script>
+  <meta charset="UTF-8">
+  <title>ConvoJarvis - Voice Detection</title>
+
+  <style>
+    body {
+      background: black;
+      color: #00f7ff;
+      font-family: Arial;
+      text-align: center;
+    }
+
+    h1 {
+      margin-top: 20px;
+    }
+
+    button {
+      padding: 12px 20px;
+      margin: 10px;
+      font-size: 16px;
+      background: #00f7ff;
+      border: none;
+      cursor: pointer;
+    }
+
+    #status {
+      font-size: 22px;
+      margin: 15px;
+    }
+
+    #volume {
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    audio {
+      display: block;
+      margin: 10px auto;
+    }
+
+    .box {
+      border: 1px solid #00f7ff;
+      padding: 10px;
+      margin: 15px;
+    }
+  </style>
 </head>
+
 <body>
 
-<button onclick="start()">Start</button>
+<h1>🧠 ConvoJarvis (Stable)</h1>
+
+<button onclick="start()">🎤 Start</button>
+<button onclick="stop()">⛔ Stop</button>
+
 <div id="status">Idle</div>
+<div id="volume">Volume: 0</div>
+
+<div class="box">
+  <h3>Saved Voice Recordings</h3>
+  <div id="recordings"></div>
+</div>
 
 <script>
+let audioContext;
+let analyser;
+let microphone;
+let dataArray;
+
+let mediaRecorder;
+let stream;
+
+let voiceChunks = [];
+let tempChunks = [];
+
+let isSpeaking = false;
+let silenceTimer;
+let saveTimer;
+
+// 🔧 Tune if needed
+const RMS_THRESHOLD = 0.02;
+const SILENCE_DELAY = 1500;
+const SAVE_INTERVAL = 10000; // 2 min
+const SMOOTHING = 0.8;
+
+let smoothed = 0;
+
 async function start() {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  document.getElementById("status").innerText = "Initializing...";
 
-  const myvad = await vad.VAD.create({
-    stream: stream,
+  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    onSpeechStart: () => {
-      document.getElementById("status").innerText = "🟢 Speaking";
-    },
+  audioContext = new AudioContext();
+  analyser = audioContext.createAnalyser();
+  microphone = audioContext.createMediaStreamSource(stream);
 
-    onSpeechEnd: () => {
-      document.getElementById("status").innerText = "🔴 Silent";
+  analyser.fftSize = 2048;
+  dataArray = new Uint8Array(analyser.fftSize);
+
+  microphone.connect(analyser);
+
+  mediaRecorder = new MediaRecorder(stream);
+
+  mediaRecorder.ondataavailable = (e) => {
+    tempChunks.push(e.data);
+  };
+
+  mediaRecorder.start(300);
+
+  detect();
+
+  saveTimer = setInterval(saveRecording, SAVE_INTERVAL);
+
+  document.getElementById("status").innerText = "🎧 Listening...";
+}
+
+function detect() {
+  requestAnimationFrame(detect);
+
+  analyser.getByteTimeDomainData(dataArray);
+
+  let sum = 0;
+  for (let i = 0; i < dataArray.length; i++) {
+    let val = (dataArray[i] - 128) / 128;
+    sum += val * val;
+  }
+
+  let rms = Math.sqrt(sum / dataArray.length);
+
+  smoothed = SMOOTHING * smoothed + (1 - SMOOTHING) * rms;
+
+  document.getElementById("volume").innerText = "Volume: " + smoothed.toFixed(4);
+
+  if (smoothed > RMS_THRESHOLD) {
+    document.getElementById("status").innerText = "🟢 Speaking";
+
+    isSpeaking = true;
+    clearTimeout(silenceTimer);
+
+  } else {
+    document.getElementById("status").innerText = "🔴 Silent";
+
+    if (isSpeaking) {
+      silenceTimer = setTimeout(() => {
+        isSpeaking = false;
+      }, SILENCE_DELAY);
     }
-  });
+  }
 
-  myvad.start();
+  processChunks();
+}
 
-  document.getElementById("status").innerText = "Listening...";
+function processChunks() {
+  if (tempChunks.length > 0) {
+    if (isSpeaking) {
+      voiceChunks.push(...tempChunks);
+    }
+    tempChunks = [];
+  }
+}
+
+function saveRecording() {
+  if (voiceChunks.length === 0) return;
+
+  const blob = new Blob(voiceChunks, { type: "audio/webm" });
+  const url = URL.createObjectURL(blob);
+
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.src = url;
+
+  document.getElementById("recordings").appendChild(audio);
+
+  voiceChunks = [];
+}
+
+function stop() {
+  mediaRecorder.stop();
+  clearInterval(saveTimer);
+
+  saveRecording();
+
+  document.getElementById("status").innerText = "⛔ Stopped";
 }
 </script>
 
