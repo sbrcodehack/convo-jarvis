@@ -3,95 +3,82 @@
 <head>
 <meta charset="UTF-8">
 <title>ConvoJarvis - 10s Voice Recorder</title>
-
 <style>
-  body {
-    background: black;
-    color: #00f7ff;
-    text-align: center;
-    font-family: Arial;
-  }
-  button {
-    padding: 12px 20px;
-    margin: 10px;
-    background: #00f7ff;
-    border: none;
-    cursor: pointer;
-  }
-  #status {
-    font-size: 22px;
-    margin: 15px;
-  }
-  audio {
-    display: block;
-    margin: 10px auto;
-  }
+  body { background: #0a0a0a; color: #00f7ff; text-align: center; font-family: 'Segoe UI', Arial; }
+  button { padding: 12px 25px; margin: 10px; background: #00f7ff; border: none; cursor: pointer; font-weight: bold; border-radius: 5px; }
+  button:hover { background: #00d1d9; }
+  #status { font-size: 24px; margin: 15px; text-shadow: 0 0 10px #00f7ff; }
+  #timer { font-family: monospace; color: #fff; }
+  .recording-item { background: #1a1a1a; padding: 10px; margin: 10px auto; width: fit-content; border-radius: 8px; border: 1px solid #333; }
+  audio { display: block; margin: 5px auto; }
 </style>
 </head>
-
 <body>
 
-<h1>🧠 ConvoJarvis (10s Voice)</h1>
-
-<button onclick="start()">🎤 Start</button>
-<button onclick="stop()">⛔ Stop</button>
+<h1>🧠 ConvoJarvis (Auto-Clipper)</h1>
+<button onclick="start()">🎤 Start Listening</button>
+<button onclick="stop()">⛔ Stop All</button>
 
 <div id="status">Idle</div>
-<div id="timer">Voice Time: 0s</div>
+<div id="timer">Voice Time: 0.0s</div>
 
-<h3>Saved Recordings</h3>
+<h3>Saved 10s Segments</h3>
 <div id="recordings"></div>
 
 <script>
 let audioContext, analyser, microphone, dataArray;
 let mediaRecorder, stream;
-
-let tempChunks = [];
 let voiceChunks = [];
-
 let isSpeaking = false;
 let silenceTimer;
-
 let smoothed = 0;
 
-// 🔧 SETTINGS
-const RMS_THRESHOLD = 0.02;
-const SILENCE_DELAY = 1500;
+// SETTINGS
+const RMS_THRESHOLD = 0.04; // Slightly higher to ignore low background hum
+const SILENCE_DELAY = 1000; 
 const SMOOTHING = 0.8;
-const MIN_VOICE_TIME = 10000; // 10 seconds
+const SEGMENT_DURATION = 10000; // 10 seconds
 
 let voiceStartTime = null;
 
 async function start() {
-  document.getElementById("status").innerText = "Initializing...";
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Resume context for Chrome/Safari policy
+    if (audioContext.state === 'suspended') await audioContext.resume();
 
-  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    analyser = audioContext.createAnalyser();
+    microphone = audioContext.createMediaStreamSource(stream);
+    analyser.fftSize = 2048;
+    dataArray = new Uint8Array(analyser.fftSize);
+    microphone.connect(analyser);
 
-  audioContext = new AudioContext();
-  analyser = audioContext.createAnalyser();
-  microphone = audioContext.createMediaStreamSource(stream);
+    mediaRecorder = new MediaRecorder(stream);
+    
+    // Push data to voiceChunks whenever it's available
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0 && isSpeaking) {
+        voiceChunks.push(e.data);
+      }
+    };
 
-  analyser.fftSize = 2048;
-  dataArray = new Uint8Array(analyser.fftSize);
-
-  microphone.connect(analyser);
-
-  mediaRecorder = new MediaRecorder(stream);
-
-  mediaRecorder.ondataavailable = (e) => {
-    tempChunks.push(e.data);
-  };
-
-  mediaRecorder.start(300);
-
-  detect();
-
-  document.getElementById("status").innerText = "🎧 Listening...";
+    // Request data every 500ms to keep chunks fresh
+    mediaRecorder.start(500);
+    detect();
+    
+    document.getElementById("status").innerText = "🎧 Listening...";
+  } catch (err) {
+    console.error("Mic access denied:", err);
+    document.getElementById("status").innerText = "❌ Mic Error";
+  }
 }
 
 function detect() {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+  
   requestAnimationFrame(detect);
-
   analyser.getByteTimeDomainData(dataArray);
 
   let sum = 0;
@@ -101,56 +88,50 @@ function detect() {
   }
 
   let rms = Math.sqrt(sum / dataArray.length);
-  smoothed = SMOOTHING * smoothed + (1 - SMOOTHING) * rms;
+  smoothed = (SMOOTHING * smoothed) + ((1 - SMOOTHING) * rms);
 
   if (smoothed > RMS_THRESHOLD) {
-    document.getElementById("status").innerText = "🟢 Speaking";
-
     if (!isSpeaking) {
       isSpeaking = true;
       voiceStartTime = Date.now();
+      document.getElementById("status").style.color = "#00ff88";
     }
-
+    document.getElementById("status").innerText = "🟢 Speaking...";
     clearTimeout(silenceTimer);
-
   } else {
-    document.getElementById("status").innerText = "🔴 Silent";
-
     if (isSpeaking) {
+      document.getElementById("status").innerText = "🟡 Silence (waiting...)";
       silenceTimer = setTimeout(() => {
         isSpeaking = false;
-        voiceStartTime = null;
+        // Optional: Save what we have if they stop talking? 
+        // For now, we only save on 10s mark as per your logic.
       }, SILENCE_DELAY);
+    } else {
+      document.getElementById("status").innerText = "🔴 Idle";
+      document.getElementById("status").style.color = "#00f7ff";
     }
   }
 
-  processChunks();
+  checkDuration();
   updateTimer();
 }
 
-function processChunks() {
-  if (tempChunks.length > 0) {
-
-    if (isSpeaking) {
-      voiceChunks.push(...tempChunks);
+function checkDuration() {
+  if (isSpeaking && voiceStartTime) {
+    let elapsed = Date.now() - voiceStartTime;
+    if (elapsed >= SEGMENT_DURATION) {
+      saveRecording();
+      voiceStartTime = Date.now(); // Reset timer for next 10s
     }
-
-    tempChunks = [];
-  }
-
-  // 🔥 Check if 10 sec reached
-  if (voiceStartTime && (Date.now() - voiceStartTime >= MIN_VOICE_TIME)) {
-    saveRecording();
-    voiceStartTime = Date.now(); // continue next segment
   }
 }
 
 function updateTimer() {
-  if (voiceStartTime) {
+  if (isSpeaking && voiceStartTime) {
     let seconds = ((Date.now() - voiceStartTime) / 1000).toFixed(1);
     document.getElementById("timer").innerText = "Voice Time: " + seconds + "s";
   } else {
-    document.getElementById("timer").innerText = "Voice Time: 0s";
+    document.getElementById("timer").innerText = "Voice Time: 0.0s";
   }
 }
 
@@ -159,20 +140,32 @@ function saveRecording() {
 
   const blob = new Blob(voiceChunks, { type: "audio/webm" });
   const url = URL.createObjectURL(blob);
-
+  
+  const container = document.createElement("div");
+  container.className = "recording-item";
+  
+  const timestamp = new Date().toLocaleTimeString();
+  container.innerHTML = `<strong>Clip: ${timestamp}</strong>`;
+  
   const audio = document.createElement("audio");
   audio.controls = true;
   audio.src = url;
 
-  document.getElementById("recordings").appendChild(audio);
+  container.appendChild(audio);
+  document.getElementById("recordings").prepend(container);
 
+  // Clear chunks for next clip
   voiceChunks = [];
 }
 
 function stop() {
-  mediaRecorder.stop();
-  saveRecording();
+  if (mediaRecorder) {
+    mediaRecorder.stop();
+    stream.getTracks().forEach(track => track.stop());
+  }
+  isSpeaking = false;
   document.getElementById("status").innerText = "⛔ Stopped";
+  document.getElementById("timer").innerText = "Voice Time: 0s";
 }
 </script>
 
