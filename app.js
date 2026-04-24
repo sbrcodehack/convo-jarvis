@@ -6,7 +6,7 @@ let finalChunks = [];
 let currentChunk = null;
 
 // ⏱️ 2 minutes = 120000 ms
-const SAVE_INTERVAL = 120000;
+const SAVE_INTERVAL = 10000;
 
 let saveTimer;
 
