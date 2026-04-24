@@ -2,28 +2,38 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>ConvoJarvis - Reliable WAV Fix</title>
+<title>ConvoJarvis - Persistent Session</title>
 <style>
   body { background: #050505; color: #00f7ff; text-align: center; font-family: 'Courier New', monospace; padding: 20px; }
   .container { max-width: 500px; margin: auto; border: 1px solid #00f7ff; padding: 20px; box-shadow: 0 0 20px #004c4e; border-radius: 10px; }
+  
   #timer { font-size: 4rem; color: #fff; margin: 10px 0; }
+  #status-text { font-size: 0.9rem; letter-spacing: 2px; color: #aaa; margin-bottom: 10px; }
+
   #meter-container { width: 100%; height: 12px; background: #111; margin: 10px auto; position: relative; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
   #meter-fill { height: 100%; width: 0%; background: #00f7ff; }
   #threshold-line { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff0055; z-index: 2; }
+
   .control-panel { background: #111; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #222; }
-  input[type=range] { width: 100%; accent-color: #00f7ff; }
-  button { padding: 15px 25px; margin: 5px; cursor: pointer; border: 1px solid #00f7ff; background: transparent; color: #00f7ff; font-weight: bold; border-radius: 4px; }
+  input[type=range] { width: 100%; accent-color: #00f7ff; cursor: pointer; }
+
+  button { padding: 12px 20px; margin: 5px; cursor: pointer; border: 1px solid #00f7ff; background: transparent; color: #00f7ff; font-weight: bold; border-radius: 4px; transition: 0.2s; }
   button:hover:not(:disabled) { background: #00f7ff; color: #000; }
-  button:disabled { border-color: #333; color: #333; opacity: 0.3; }
-  .recording-card { background: #111; padding: 15px; margin: 15px 0; border: 1px solid #00f7ff; border-radius: 8px; text-align: left; }
+  button:disabled { border-color: #333; color: #333; opacity: 0.3; cursor: not-allowed; }
+  
+  .btn-danger { border-color: #ff0055; color: #ff0055; font-size: 0.7rem; margin-top: 20px; }
+  .btn-danger:hover { background: #ff0055; color: #fff; }
+
+  .recording-card { background: #111; padding: 15px; margin: 15px 0; border: 1px solid #333; border-radius: 8px; text-align: left; border-left: 4px solid #00f7ff; }
   audio { width: 100%; margin-top: 10px; filter: invert(100%) hue-rotate(180deg); }
+  .log-time { color: #00ff88; font-size: 0.8rem; font-weight: bold; }
 </style>
 </head>
 <body>
 
 <div class="container">
   <h1>CONVO-JARVIS</h1>
-  <div id="status-text">READY</div>
+  <div id="status-text">OFFLINE</div>
   <div id="timer">0.0s</div>
 
   <div id="meter-container">
@@ -38,9 +48,11 @@
 
   <button id="startBtn" onclick="initSystem()">ACTIVATE</button>
   <button id="saveBtn" onclick="generateFile()" disabled>💾 GENERATE</button>
-  <button id="stopBtn" onclick="location.reload()" disabled>SHUTDOWN</button>
+  <button id="stopBtn" onclick="shutdown()" disabled>⛔ SHUTDOWN</button>
 
   <div id="recordings"></div>
+  
+  <button class="btn-danger" onclick="clearHistory()">CLEAR ALL LOGS</button>
 </div>
 
 <script>
@@ -57,54 +69,51 @@ function updateSensitivity(val) {
 }
 
 async function initSystem() {
-  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  input = audioContext.createMediaStreamSource(stream);
-  
-  // ScriptProcessor node to handle raw PCM data
-  processor = audioContext.createScriptProcessor(4096, 1, 1);
-  
-  input.connect(processor);
-  processor.connect(audioContext.destination);
-
-  processor.onaudioprocess = (e) => {
-    const data = e.inputBuffer.getChannelData(0);
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    input = audioContext.createMediaStreamSource(stream);
     
-    // Calculate RMS (volume)
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) {
-      sum += data[i] * data[i];
-    }
-    let rms = Math.sqrt(sum / data.length);
+    // 4096 buffer size for balance between performance and latency
+    processor = audioContext.createScriptProcessor(4096, 1, 1);
+    
+    input.connect(processor);
+    processor.connect(audioContext.destination);
 
-    // Update Meter
-    document.getElementById("meter-fill").style.width = Math.min(rms * 500, 100) + "%";
+    processor.onaudioprocess = (e) => {
+      const data = e.inputBuffer.getChannelData(0);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      let rms = Math.sqrt(sum / data.length);
 
-    if (rms > threshold) {
-      isSpeaking = true;
-      // Capture the raw samples only when speaking
-      leftChannel.push(new Float32Array(data));
-      accumulatedTime += (4096 / audioContext.sampleRate);
-      document.getElementById("timer").style.color = "#00f7ff";
-      document.getElementById("status-text").innerText = "RECORDING...";
-    } else {
-      isSpeaking = false;
-      document.getElementById("timer").style.color = "#333";
-      document.getElementById("status-text").innerText = "WAITING...";
-    }
+      document.getElementById("meter-fill").style.width = Math.min(rms * 500, 100) + "%";
 
-    document.getElementById("timer").innerText = accumulatedTime.toFixed(1) + "s";
-    document.getElementById("saveBtn").disabled = (accumulatedTime < 1.0);
-  };
+      if (rms > threshold) {
+        isSpeaking = true;
+        leftChannel.push(new Float32Array(data));
+        accumulatedTime += (4096 / audioContext.sampleRate);
+        document.getElementById("status-text").innerText = "• RECORDING •";
+        document.getElementById("status-text").style.color = "#00ff88";
+      } else {
+        isSpeaking = false;
+        document.getElementById("status-text").innerText = "IDLE (WAITING)";
+        document.getElementById("status-text").style.color = "#aaa";
+      }
 
-  document.getElementById("startBtn").disabled = true;
-  document.getElementById("stopBtn").disabled = false;
+      document.getElementById("timer").innerText = accumulatedTime.toFixed(1) + "s";
+      document.getElementById("saveBtn").disabled = (accumulatedTime < 1.0);
+    };
+
+    document.getElementById("startBtn").disabled = true;
+    document.getElementById("stopBtn").disabled = false;
+  } catch(e) {
+    alert("Microphone access denied.");
+  }
 }
 
 function generateFile() {
   if (leftChannel.length === 0) return;
 
-  // Flatten the recorded samples
   const flattened = flattenArray(leftChannel, leftChannel.length * 4096);
   const wavBlob = createWavBlob(flattened, audioContext.sampleRate);
   const url = URL.createObjectURL(wavBlob);
@@ -112,19 +121,42 @@ function generateFile() {
   const card = document.createElement("div");
   card.className = "recording-card";
   card.innerHTML = `
-    <div style="color:#00ff88; font-size:0.8rem">LOG: ${new Date().toLocaleTimeString()}</div>
-    <div>Captured: ${accumulatedTime.toFixed(1)}s</div>
+    <div class="log-time">LOG ENTRY: ${new Date().toLocaleTimeString()}</div>
+    <div style="font-size: 0.8rem">Voice Length: ${accumulatedTime.toFixed(1)}s</div>
     <audio controls src="${url}"></audio>
   `;
   document.getElementById("recordings").prepend(card);
 
-  // Reset
+  // Reset buffers but keep UI alive
   leftChannel = [];
   accumulatedTime = 0;
+  document.getElementById("timer").innerText = "0.0s";
 }
 
-// --- WAV ENCODING HELPERS ---
+function shutdown() {
+  // Stop mic tracks
+  if (stream) stream.getTracks().forEach(track => track.stop());
+  // Disconnect audio nodes
+  if (processor) processor.disconnect();
+  if (input) input.disconnect();
+  if (audioContext) audioContext.close();
 
+  // Reset UI buttons
+  document.getElementById("startBtn").disabled = false;
+  document.getElementById("stopBtn").disabled = true;
+  document.getElementById("saveBtn").disabled = true;
+  document.getElementById("status-text").innerText = "OFFLINE";
+  document.getElementById("status-text").style.color = "#aaa";
+  document.getElementById("meter-fill").style.width = "0%";
+}
+
+function clearHistory() {
+  if(confirm("Erase all captured voice logs?")) {
+    document.getElementById("recordings").innerHTML = "";
+  }
+}
+
+// --- WAV HELPERS ---
 function flattenArray(channelBuffer, recordingLength) {
   let result = new Float32Array(recordingLength);
   let offset = 0;
@@ -138,12 +170,7 @@ function flattenArray(channelBuffer, recordingLength) {
 function createWavBlob(samples, sampleRate) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
-
-  const writeString = (view, offset, string) => {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i));
-    }
-  };
+  const writeString = (v, o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
 
   writeString(view, 0, 'RIFF');
   view.setUint32(4, 32 + samples.length * 2, true);
@@ -159,13 +186,11 @@ function createWavBlob(samples, sampleRate) {
   writeString(view, 36, 'data');
   view.setUint32(40, samples.length * 2, true);
 
-  // Write PCM samples
   let offset = 44;
   for (let i = 0; i < samples.length; i++, offset += 2) {
     let s = Math.max(-1, Math.min(1, samples[i]));
     view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
   }
-
   return new Blob([view], { type: 'audio/wav' });
 }
 </script>
