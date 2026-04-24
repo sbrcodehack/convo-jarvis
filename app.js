@@ -1,98 +1,59 @@
-let audioContext;
-let analyser;
-let microphone;
-let dataArray;
+let vad;
+let mediaStream;
+let recorder;
 
-let mediaRecorder;
-let stream;
-
-let isSpeaking = false;
-
-// 🔧 Tune these
-const RMS_THRESHOLD = 0.02;
-const SMOOTHING = 0.8;
-const SILENCE_DELAY = 1500;
-
-let smoothedVolume = 0;
-let silenceTimer = null;
-
-// 🔥 Store ONLY voice chunks
 let finalChunks = [];
-let tempChunks = [];
+let currentChunk = null;
+
+// ⏱️ 2 minutes = 120000 ms
+const SAVE_INTERVAL = 120000;
+
+let saveTimer;
 
 async function startListening() {
-  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-  audioContext = new AudioContext();
-  analyser = audioContext.createAnalyser();
-  microphone = audioContext.createMediaStreamSource(stream);
+  recorder = new MediaRecorder(mediaStream);
 
-  analyser.fftSize = 2048;
-  dataArray = new Uint8Array(analyser.fftSize);
-
-  microphone.connect(analyser);
-
-  mediaRecorder = new MediaRecorder(stream);
-
-  mediaRecorder.ondataavailable = (event) => {
-    tempChunks.push(event.data);
+  recorder.ondataavailable = (e) => {
+    currentChunk = e.data;
   };
 
-  mediaRecorder.start(500); // collect every 500ms
+  recorder.start(500); // capture every 500ms
 
-  detectVoice();
-}
+  // 🔥 VAD setup
+  vad = await vadWeb.VAD.create({
+    stream: mediaStream,
 
-function detectVoice() {
-  requestAnimationFrame(detectVoice);
+    onSpeechStart: () => {
+      console.log("🟢 Human voice started");
+    },
 
-  analyser.getByteTimeDomainData(dataArray);
+    onSpeechEnd: () => {
+      console.log("🔴 Human voice ended");
+    },
 
-  let sumSquares = 0;
-  for (let i = 0; i < dataArray.length; i++) {
-    let normalized = (dataArray[i] - 128) / 128;
-    sumSquares += normalized * normalized;
-  }
+    onFrameProcessed: (probs) => {
+      if (probs.isSpeech && currentChunk) {
+        finalChunks.push(currentChunk);
+      }
 
-  let rms = Math.sqrt(sumSquares / dataArray.length);
-
-  smoothedVolume = SMOOTHING * smoothedVolume + (1 - SMOOTHING) * rms;
-
-  document.getElementById("volume").innerText = smoothedVolume.toFixed(4);
-
-  if (smoothedVolume > RMS_THRESHOLD) {
-    document.getElementById("status").innerText = "🟢 Speaking";
-
-    isSpeaking = true;
-    clearTimeout(silenceTimer);
-
-  } else {
-    document.getElementById("status").innerText = "🔴 Silent";
-
-    if (isSpeaking) {
-      silenceTimer = setTimeout(() => {
-        isSpeaking = false;
-      }, SILENCE_DELAY);
+      document.getElementById("status").innerText =
+        probs.isSpeech ? "🟢 Speaking" : "🔴 Silent";
     }
-  }
+  });
 
-  processChunks();
+  vad.start();
+
+  // ⏱️ Start auto-save timer
+  saveTimer = setInterval(saveRecording, SAVE_INTERVAL);
 }
 
-function processChunks() {
-  if (tempChunks.length > 0) {
-    if (isSpeaking) {
-      // ✅ Keep only voice chunks
-      finalChunks.push(...tempChunks);
-    }
-    // ❌ Discard noise chunks automatically
-    tempChunks = [];
+function saveRecording() {
+  if (finalChunks.length === 0) {
+    console.log("No voice detected in this interval");
+    return;
   }
-}
-
-// 🔥 Final export (ONE FILE)
-function stopAndSave() {
-  mediaRecorder.stop();
 
   const blob = new Blob(finalChunks, { type: "audio/webm" });
   const url = URL.createObjectURL(blob);
@@ -103,5 +64,19 @@ function stopAndSave() {
 
   document.getElementById("recordings").appendChild(audio);
 
-  console.log("✅ Final voice-only recording saved");
+  console.log("✅ Auto-saved 2-minute voice chunk");
+
+  // 🔥 Reset buffer for next interval
+  finalChunks = [];
+}
+
+function stopListening() {
+  vad.pause();
+  recorder.stop();
+  clearInterval(saveTimer);
+
+  // Save remaining data
+  saveRecording();
+
+  console.log("⛔ Stopped completely");
 }
