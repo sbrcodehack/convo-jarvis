@@ -2,15 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>ConvoJarvis - Final Fix</title>
+<title>ConvoJarvis - Final Playback Fix</title>
 <style>
   body { background: #050505; color: #00f7ff; text-align: center; font-family: 'Courier New', monospace; padding: 20px; }
   .container { max-width: 500px; margin: auto; border: 1px solid #00f7ff; padding: 20px; box-shadow: 0 0 20px #004c4e; border-radius: 10px; }
-  
   #timer { font-size: 4rem; color: #fff; font-variant-numeric: tabular-nums; margin: 10px 0; }
   #status-text { font-size: 0.9rem; letter-spacing: 2px; margin-bottom: 15px; color: #aaa; }
 
-  /* Visualizers */
   #meter-container { width: 100%; height: 12px; background: #111; margin: 10px auto; position: relative; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
   #meter-fill { height: 100%; width: 0%; background: #00f7ff; transition: width 0.05s; }
   #threshold-line { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff0055; z-index: 2; }
@@ -18,16 +16,12 @@
   .control-panel { background: #111; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #222; }
   input[type=range] { width: 100%; cursor: pointer; accent-color: #00f7ff; }
 
-  button { 
-    padding: 15px 25px; margin: 5px; cursor: pointer; border: 1px solid #00f7ff; 
-    background: transparent; color: #00f7ff; font-weight: bold; border-radius: 4px;
-  }
-  button:hover:not(:disabled) { background: #00f7ff; color: #000; box-shadow: 0 0 15px #00f7ff; }
+  button { padding: 15px 25px; margin: 5px; cursor: pointer; border: 1px solid #00f7ff; background: transparent; color: #00f7ff; font-weight: bold; border-radius: 4px; }
+  button:hover:not(:disabled) { background: #00f7ff; color: #000; }
   button:disabled { border-color: #333; color: #333; cursor: not-allowed; opacity: 0.3; }
 
   .recording-card { background: #111; padding: 15px; margin: 15px 0; border: 1px solid #00f7ff; border-radius: 8px; text-align: left; }
   audio { width: 100%; margin-top: 10px; filter: invert(100%) hue-rotate(180deg); }
-  .timestamp { color: #00ff88; font-size: 0.8rem; }
 </style>
 </head>
 <body>
@@ -47,20 +41,19 @@
     <input type="range" id="sensSlider" min="0.010" max="0.200" step="0.005" value="0.040" oninput="updateSensitivity(this.value)">
   </div>
 
-  <button id="startBtn" onclick="initSystem()">ACTIVATE SYSTEM</button>
-  <button id="saveBtn" onclick="generateFile()" disabled>💾 GENERATE AUDIO</button>
+  <button id="startBtn" onclick="initSystem()">ACTIVATE</button>
+  <button id="saveBtn" onclick="generateFile()" disabled>💾 GENERATE</button>
   <button id="stopBtn" onclick="shutdown()" disabled>SHUTDOWN</button>
 
   <div id="recordings"></div>
 </div>
 
 <script>
-let stream, audioContext, analyser, dataArray;
-let mediaRecorder;
-let finalChunks = []; // This stores the actual blobs
-let isCapturing = false;
+let stream, audioContext, analyser, dataArray, mediaRecorder;
+let chunks = [];
 let accumulatedTime = 0;
 let lastTime = 0;
+let isSpeaking = false;
 let threshold = 0.040;
 
 function updateSensitivity(val) {
@@ -71,16 +64,29 @@ function updateSensitivity(val) {
 
 async function initSystem() {
   stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  
+  // 1. Setup Visualizer
+  audioContext = new AudioContext();
   analyser = audioContext.createAnalyser();
   const source = audioContext.createMediaStreamSource(stream);
   analyser.fftSize = 256;
   dataArray = new Uint8Array(analyser.frequencyBinCount);
   source.connect(analyser);
 
+  // 2. Setup Recorder - Single session
+  mediaRecorder = new MediaRecorder(stream);
+  mediaRecorder.ondataavailable = (e) => {
+    // Only keep data if the app is currently in "speaking" mode
+    if (isSpeaking && e.data.size > 0) {
+      chunks.push(e.data);
+    }
+  };
+  
+  // High frequency slicing (100ms) to ensure we catch every word
+  mediaRecorder.start(100);
+
   document.getElementById("startBtn").disabled = true;
   document.getElementById("stopBtn").disabled = false;
-  document.getElementById("status-text").innerText = "LISTENING FOR VOICE...";
   
   lastTime = performance.now();
   loop();
@@ -100,67 +106,57 @@ function loop() {
   }
   let rms = Math.sqrt(sum / dataArray.length);
 
-  // Meter visual
   document.getElementById("meter-fill").style.width = Math.min(rms * 500, 100) + "%";
 
   if (rms > threshold) {
-    if (!isCapturing) startRecording();
+    isSpeaking = true;
     accumulatedTime += delta;
+    document.getElementById("status-text").innerText = "RECORDING VOICE...";
     document.getElementById("timer").style.color = "#00f7ff";
-    document.getElementById("status-text").innerText = "RECORDING...";
   } else {
-    if (isCapturing) stopRecording();
-    document.getElementById("timer").style.color = "#333";
+    isSpeaking = false;
     document.getElementById("status-text").innerText = "WAITING...";
+    document.getElementById("timer").style.color = "#333";
   }
 
-  const totalSecs = (accumulatedTime / 1000).toFixed(1);
-  document.getElementById("timer").innerText = totalSecs + "s";
+  document.getElementById("timer").innerText = (accumulatedTime / 1000).toFixed(1) + "s";
   document.getElementById("saveBtn").disabled = (accumulatedTime < 1000);
 
   requestAnimationFrame(loop);
 }
 
-function startRecording() {
-  isCapturing = true;
-  mediaRecorder = new MediaRecorder(stream);
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) finalChunks.push(e.data);
-  };
-  mediaRecorder.start();
-}
-
-function stopRecording() {
-  isCapturing = false;
-  if (mediaRecorder && mediaRecorder.state === "recording") {
-    mediaRecorder.stop();
-  }
-}
-
 function generateFile() {
-  if (finalChunks.length === 0) return;
+  if (chunks.length === 0) return;
 
-  // Combine all valid WebM segments into one blob
-  const blob = new Blob(finalChunks, { type: "audio/webm" });
-  const url = URL.createObjectURL(blob);
-  
-  const card = document.createElement("div");
-  card.className = "recording-card";
-  card.innerHTML = `
-    <div class="timestamp">ENTRY LOG: ${new Date().toLocaleTimeString()}</div>
-    <div>Captured: ${(accumulatedTime/1000).toFixed(1)}s</div>
-    <audio controls src="${url}"></audio>
-  `;
-  
-  document.getElementById("recordings").prepend(card);
+  // We stop the recorder briefly to finalize the data, then restart it
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(chunks, { type: "audio/webm" });
+    const url = URL.createObjectURL(blob);
+    
+    const card = document.createElement("div");
+    card.className = "recording-card";
+    card.innerHTML = `
+      <div style="color:#00ff88; font-size:0.8rem">LOG: ${new Date().toLocaleTimeString()}</div>
+      <div>Duration: ${(accumulatedTime/1000).toFixed(1)}s</div>
+      <audio controls src="${url}"></audio>
+    `;
+    document.getElementById("recordings").prepend(card);
 
-  // Reset Session
-  finalChunks = [];
-  accumulatedTime = 0;
+    // Reset session
+    chunks = [];
+    accumulatedTime = 0;
+    
+    // Restart if still active
+    if (stream) {
+      mediaRecorder.start(100);
+    }
+  };
+
+  mediaRecorder.stop();
 }
 
 function shutdown() {
-  location.reload(); 
+  location.reload();
 }
 </script>
 </body>
