@@ -9,7 +9,12 @@ let audioChunks = [];
 let isSpeaking = false;
 let silenceTimer = null;
 
-const THRESHOLD = 25; // 🔧 adjust this
+// 🔧 Tune these
+const RMS_THRESHOLD = 0.02;   // try 0.01–0.05
+const SILENCE_DELAY = 2000;   // ms
+const SMOOTHING = 0.8;        // 0–1 (higher = smoother)
+
+let smoothedVolume = 0;
 
 async function startListening() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -18,8 +23,8 @@ async function startListening() {
   analyser = audioContext.createAnalyser();
   microphone = audioContext.createMediaStreamSource(stream);
 
-  analyser.fftSize = 256;
-  dataArray = new Uint8Array(analyser.frequencyBinCount);
+  analyser.fftSize = 2048; // better resolution
+  dataArray = new Uint8Array(analyser.fftSize);
 
   microphone.connect(analyser);
 
@@ -37,13 +42,22 @@ async function startListening() {
 function detectVoice() {
   requestAnimationFrame(detectVoice);
 
-  analyser.getByteFrequencyData(dataArray);
+  analyser.getByteTimeDomainData(dataArray);
 
-  let volume = dataArray.reduce((a, b) => a + b) / dataArray.length;
+  // 🔥 RMS calculation
+  let sumSquares = 0;
+  for (let i = 0; i < dataArray.length; i++) {
+    let normalized = (dataArray[i] - 128) / 128; // center at 0
+    sumSquares += normalized * normalized;
+  }
+  let rms = Math.sqrt(sumSquares / dataArray.length);
 
-  document.getElementById("volume").innerText = volume.toFixed(2);
+  // 🔥 smoothing (important!)
+  smoothedVolume = SMOOTHING * smoothedVolume + (1 - SMOOTHING) * rms;
 
-  if (volume > THRESHOLD) {
+  document.getElementById("volume").innerText = smoothedVolume.toFixed(4);
+
+  if (smoothedVolume > RMS_THRESHOLD) {
     document.getElementById("status").innerText = "🟢 Speaking";
 
     if (!isSpeaking) {
@@ -60,7 +74,7 @@ function detectVoice() {
       silenceTimer = setTimeout(() => {
         stopRecording();
         isSpeaking = false;
-      }, 2000); // 2 sec silence
+      }, SILENCE_DELAY);
     }
   }
 }
