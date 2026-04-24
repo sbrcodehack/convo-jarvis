@@ -4,26 +4,30 @@ let microphone;
 let dataArray;
 
 let mediaRecorder;
-let audioChunks = [];
+let stream;
 
 let isSpeaking = false;
-let silenceTimer = null;
 
 // 🔧 Tune these
-const RMS_THRESHOLD = 0.02;   // try 0.01–0.05
-const SILENCE_DELAY = 2000;   // ms
-const SMOOTHING = 0.8;        // 0–1 (higher = smoother)
+const RMS_THRESHOLD = 0.02;
+const SMOOTHING = 0.8;
+const SILENCE_DELAY = 1500;
 
 let smoothedVolume = 0;
+let silenceTimer = null;
+
+// 🔥 Store ONLY voice chunks
+let finalChunks = [];
+let tempChunks = [];
 
 async function startListening() {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
   audioContext = new AudioContext();
   analyser = audioContext.createAnalyser();
   microphone = audioContext.createMediaStreamSource(stream);
 
-  analyser.fftSize = 2048; // better resolution
+  analyser.fftSize = 2048;
   dataArray = new Uint8Array(analyser.fftSize);
 
   microphone.connect(analyser);
@@ -31,10 +35,10 @@ async function startListening() {
   mediaRecorder = new MediaRecorder(stream);
 
   mediaRecorder.ondataavailable = (event) => {
-    audioChunks.push(event.data);
+    tempChunks.push(event.data);
   };
 
-  mediaRecorder.onstop = saveAudio;
+  mediaRecorder.start(500); // collect every 500ms
 
   detectVoice();
 }
@@ -44,15 +48,14 @@ function detectVoice() {
 
   analyser.getByteTimeDomainData(dataArray);
 
-  // 🔥 RMS calculation
   let sumSquares = 0;
   for (let i = 0; i < dataArray.length; i++) {
-    let normalized = (dataArray[i] - 128) / 128; // center at 0
+    let normalized = (dataArray[i] - 128) / 128;
     sumSquares += normalized * normalized;
   }
+
   let rms = Math.sqrt(sumSquares / dataArray.length);
 
-  // 🔥 smoothing (important!)
   smoothedVolume = SMOOTHING * smoothedVolume + (1 - SMOOTHING) * rms;
 
   document.getElementById("volume").innerText = smoothedVolume.toFixed(4);
@@ -60,11 +63,7 @@ function detectVoice() {
   if (smoothedVolume > RMS_THRESHOLD) {
     document.getElementById("status").innerText = "🟢 Speaking";
 
-    if (!isSpeaking) {
-      startRecording();
-      isSpeaking = true;
-    }
-
+    isSpeaking = true;
     clearTimeout(silenceTimer);
 
   } else {
@@ -72,26 +71,30 @@ function detectVoice() {
 
     if (isSpeaking) {
       silenceTimer = setTimeout(() => {
-        stopRecording();
         isSpeaking = false;
       }, SILENCE_DELAY);
     }
   }
+
+  processChunks();
 }
 
-function startRecording() {
-  audioChunks = [];
-  mediaRecorder.start();
-  console.log("🎤 Recording started");
+function processChunks() {
+  if (tempChunks.length > 0) {
+    if (isSpeaking) {
+      // ✅ Keep only voice chunks
+      finalChunks.push(...tempChunks);
+    }
+    // ❌ Discard noise chunks automatically
+    tempChunks = [];
+  }
 }
 
-function stopRecording() {
+// 🔥 Final export (ONE FILE)
+function stopAndSave() {
   mediaRecorder.stop();
-  console.log("⛔ Recording stopped");
-}
 
-function saveAudio() {
-  const blob = new Blob(audioChunks, { type: "audio/webm" });
+  const blob = new Blob(finalChunks, { type: "audio/webm" });
   const url = URL.createObjectURL(blob);
 
   const audio = document.createElement("audio");
@@ -99,4 +102,6 @@ function saveAudio() {
   audio.src = url;
 
   document.getElementById("recordings").appendChild(audio);
+
+  console.log("✅ Final voice-only recording saved");
 }
