@@ -1,61 +1,63 @@
 let vad;
-let mediaStream;
+let stream;
 let recorder;
 
-let finalChunks = [];
 let currentChunk = null;
-
-// ⏱️ 2 minutes = 120000 ms
-const SAVE_INTERVAL = 10000;
+let voiceChunks = [];
 
 let saveTimer;
 
-async function startListening() {
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+// 2 minutes
+const SAVE_INTERVAL = 10000;
 
-  recorder = new MediaRecorder(mediaStream);
+async function start() {
+  document.getElementById("status").innerText = "Initializing...";
+
+  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+  // 🎤 Recorder
+  recorder = new MediaRecorder(stream);
 
   recorder.ondataavailable = (e) => {
     currentChunk = e.data;
   };
 
-  recorder.start(500); // capture every 500ms
+  recorder.start(400); // collect chunks every 400ms
 
   // 🔥 VAD setup
   vad = await vadWeb.VAD.create({
-    stream: mediaStream,
+    stream: stream,
 
     onSpeechStart: () => {
-      console.log("🟢 Human voice started");
+      document.getElementById("status").innerText = "🟢 Speaking";
     },
 
     onSpeechEnd: () => {
-      console.log("🔴 Human voice ended");
+      document.getElementById("status").innerText = "🔴 Silent";
     },
 
-    onFrameProcessed: (probs) => {
-      if (probs.isSpeech && currentChunk) {
-        finalChunks.push(currentChunk);
+    onFrameProcessed: (prob) => {
+      if (prob.isSpeech && currentChunk) {
+        voiceChunks.push(currentChunk);
       }
-
-      document.getElementById("status").innerText =
-        probs.isSpeech ? "🟢 Speaking" : "🔴 Silent";
     }
   });
 
   vad.start();
 
-  // ⏱️ Start auto-save timer
+  // ⏱ Auto-save
   saveTimer = setInterval(saveRecording, SAVE_INTERVAL);
+
+  document.getElementById("status").innerText = "Listening...";
 }
 
 function saveRecording() {
-  if (finalChunks.length === 0) {
-    console.log("No voice detected in this interval");
+  if (voiceChunks.length === 0) {
+    console.log("No voice in this interval");
     return;
   }
 
-  const blob = new Blob(finalChunks, { type: "audio/webm" });
+  const blob = new Blob(voiceChunks, { type: "audio/webm" });
   const url = URL.createObjectURL(blob);
 
   const audio = document.createElement("audio");
@@ -64,19 +66,18 @@ function saveRecording() {
 
   document.getElementById("recordings").appendChild(audio);
 
-  console.log("✅ Auto-saved 2-minute voice chunk");
+  console.log("Saved chunk");
 
-  // 🔥 Reset buffer for next interval
-  finalChunks = [];
+  // reset
+  voiceChunks = [];
 }
 
-function stopListening() {
-  vad.pause();
-  recorder.stop();
+function stop() {
+  if (vad) vad.pause();
+  if (recorder) recorder.stop();
   clearInterval(saveTimer);
 
-  // Save remaining data
   saveRecording();
 
-  console.log("⛔ Stopped completely");
+  document.getElementById("status").innerText = "Stopped";
 }
