@@ -1,68 +1,88 @@
-let recognition;
-let isListening = false;
-let fullTranscript = "";
+let audioContext;
+let analyser;
+let microphone;
+let dataArray;
 
-// Initialize Speech Recognition
-function initRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let mediaRecorder;
+let audioChunks = [];
 
-  if (!SpeechRecognition) {
-    alert("Speech Recognition not supported in this browser");
-    return;
-  }
+let isSpeaking = false;
+let silenceTimer = null;
 
-  recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = "en-IN";
+const THRESHOLD = 25; // 🔧 adjust this
 
-  recognition.onresult = (event) => {
-    let transcript = "";
+async function startListening() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      transcript += event.results[i][0].transcript;
+  audioContext = new AudioContext();
+  analyser = audioContext.createAnalyser();
+  microphone = audioContext.createMediaStreamSource(stream);
+
+  analyser.fftSize = 256;
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+  microphone.connect(analyser);
+
+  mediaRecorder = new MediaRecorder(stream);
+
+  mediaRecorder.ondataavailable = (event) => {
+    audioChunks.push(event.data);
+  };
+
+  mediaRecorder.onstop = saveAudio;
+
+  detectVoice();
+}
+
+function detectVoice() {
+  requestAnimationFrame(detectVoice);
+
+  analyser.getByteFrequencyData(dataArray);
+
+  let volume = dataArray.reduce((a, b) => a + b) / dataArray.length;
+
+  document.getElementById("volume").innerText = volume.toFixed(2);
+
+  if (volume > THRESHOLD) {
+    document.getElementById("status").innerText = "🟢 Speaking";
+
+    if (!isSpeaking) {
+      startRecording();
+      isSpeaking = true;
     }
 
-    document.getElementById("transcript").innerText = transcript;
-    fullTranscript += " " + transcript;
-  };
+    clearTimeout(silenceTimer);
 
-  recognition.onend = () => {
-    if (isListening) recognition.start(); // auto restart
-  };
-}
+  } else {
+    document.getElementById("status").innerText = "🔴 Silent";
 
-// Start Listening
-function startListening() {
-  if (!recognition) initRecognition();
-
-  isListening = true;
-  recognition.start();
-  document.getElementById("status").innerText = "Status: Listening...";
-}
-
-// Stop Listening
-function stopListening() {
-  isListening = false;
-  recognition.stop();
-  document.getElementById("status").innerText = "Status: Stopped";
-}
-
-// Generate Summary (Basic AI Logic)
-function generateSummary() {
-  if (!fullTranscript) {
-    alert("No data to summarize!");
-    return;
+    if (isSpeaking) {
+      silenceTimer = setTimeout(() => {
+        stopRecording();
+        isSpeaking = false;
+      }, 2000); // 2 sec silence
+    }
   }
+}
 
-  // Simple keyword-based summary (replace later with AI API)
-  let words = fullTranscript.split(" ");
-  let wordCount = words.length;
+function startRecording() {
+  audioChunks = [];
+  mediaRecorder.start();
+  console.log("🎤 Recording started");
+}
 
-  let summary = `
-    Total Words Spoken: ${wordCount}
-    Sample: ${words.slice(0, 50).join(" ")}...
-  `;
+function stopRecording() {
+  mediaRecorder.stop();
+  console.log("⛔ Recording stopped");
+}
 
-  document.getElementById("summary").innerText = summary;
+function saveAudio() {
+  const blob = new Blob(audioChunks, { type: "audio/webm" });
+  const url = URL.createObjectURL(blob);
+
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.src = url;
+
+  document.getElementById("recordings").appendChild(audio);
 }
