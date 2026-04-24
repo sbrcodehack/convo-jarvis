@@ -2,24 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>ConvoJarvis - Final Playback Fix</title>
+<title>ConvoJarvis - Reliable WAV Fix</title>
 <style>
   body { background: #050505; color: #00f7ff; text-align: center; font-family: 'Courier New', monospace; padding: 20px; }
   .container { max-width: 500px; margin: auto; border: 1px solid #00f7ff; padding: 20px; box-shadow: 0 0 20px #004c4e; border-radius: 10px; }
-  #timer { font-size: 4rem; color: #fff; font-variant-numeric: tabular-nums; margin: 10px 0; }
-  #status-text { font-size: 0.9rem; letter-spacing: 2px; margin-bottom: 15px; color: #aaa; }
-
+  #timer { font-size: 4rem; color: #fff; margin: 10px 0; }
   #meter-container { width: 100%; height: 12px; background: #111; margin: 10px auto; position: relative; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
-  #meter-fill { height: 100%; width: 0%; background: #00f7ff; transition: width 0.05s; }
+  #meter-fill { height: 100%; width: 0%; background: #00f7ff; }
   #threshold-line { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff0055; z-index: 2; }
-
   .control-panel { background: #111; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #222; }
-  input[type=range] { width: 100%; cursor: pointer; accent-color: #00f7ff; }
-
+  input[type=range] { width: 100%; accent-color: #00f7ff; }
   button { padding: 15px 25px; margin: 5px; cursor: pointer; border: 1px solid #00f7ff; background: transparent; color: #00f7ff; font-weight: bold; border-radius: 4px; }
   button:hover:not(:disabled) { background: #00f7ff; color: #000; }
-  button:disabled { border-color: #333; color: #333; cursor: not-allowed; opacity: 0.3; }
-
+  button:disabled { border-color: #333; color: #333; opacity: 0.3; }
   .recording-card { background: #111; padding: 15px; margin: 15px 0; border: 1px solid #00f7ff; border-radius: 8px; text-align: left; }
   audio { width: 100%; margin-top: 10px; filter: invert(100%) hue-rotate(180deg); }
 </style>
@@ -28,7 +23,7 @@
 
 <div class="container">
   <h1>CONVO-JARVIS</h1>
-  <div id="status-text">SYSTEM STANDBY</div>
+  <div id="status-text">READY</div>
   <div id="timer">0.0s</div>
 
   <div id="meter-container">
@@ -43,120 +38,135 @@
 
   <button id="startBtn" onclick="initSystem()">ACTIVATE</button>
   <button id="saveBtn" onclick="generateFile()" disabled>💾 GENERATE</button>
-  <button id="stopBtn" onclick="shutdown()" disabled>SHUTDOWN</button>
+  <button id="stopBtn" onclick="location.reload()" disabled>SHUTDOWN</button>
 
   <div id="recordings"></div>
 </div>
 
 <script>
-let stream, audioContext, analyser, dataArray, mediaRecorder;
-let chunks = [];
+let audioContext, processor, input, stream;
+let leftChannel = [];
 let accumulatedTime = 0;
-let lastTime = 0;
-let isSpeaking = false;
 let threshold = 0.040;
+let isSpeaking = false;
 
 function updateSensitivity(val) {
   threshold = parseFloat(val);
   document.getElementById("sensVal").innerText = val;
-  document.getElementById("threshold-line").style.left = Math.min(threshold * 500, 100) + "%";
+  document.getElementById("threshold-line").style.left = (threshold * 500) + "%";
 }
 
 async function initSystem() {
   stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  input = audioContext.createMediaStreamSource(stream);
   
-  // 1. Setup Visualizer
-  audioContext = new AudioContext();
-  analyser = audioContext.createAnalyser();
-  const source = audioContext.createMediaStreamSource(stream);
-  analyser.fftSize = 256;
-  dataArray = new Uint8Array(analyser.frequencyBinCount);
-  source.connect(analyser);
+  // ScriptProcessor node to handle raw PCM data
+  processor = audioContext.createScriptProcessor(4096, 1, 1);
+  
+  input.connect(processor);
+  processor.connect(audioContext.destination);
 
-  // 2. Setup Recorder - Single session
-  mediaRecorder = new MediaRecorder(stream);
-  mediaRecorder.ondataavailable = (e) => {
-    // Only keep data if the app is currently in "speaking" mode
-    if (isSpeaking && e.data.size > 0) {
-      chunks.push(e.data);
+  processor.onaudioprocess = (e) => {
+    const data = e.inputBuffer.getChannelData(0);
+    
+    // Calculate RMS (volume)
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      sum += data[i] * data[i];
     }
+    let rms = Math.sqrt(sum / data.length);
+
+    // Update Meter
+    document.getElementById("meter-fill").style.width = Math.min(rms * 500, 100) + "%";
+
+    if (rms > threshold) {
+      isSpeaking = true;
+      // Capture the raw samples only when speaking
+      leftChannel.push(new Float32Array(data));
+      accumulatedTime += (4096 / audioContext.sampleRate);
+      document.getElementById("timer").style.color = "#00f7ff";
+      document.getElementById("status-text").innerText = "RECORDING...";
+    } else {
+      isSpeaking = false;
+      document.getElementById("timer").style.color = "#333";
+      document.getElementById("status-text").innerText = "WAITING...";
+    }
+
+    document.getElementById("timer").innerText = accumulatedTime.toFixed(1) + "s";
+    document.getElementById("saveBtn").disabled = (accumulatedTime < 1.0);
   };
-  
-  // High frequency slicing (100ms) to ensure we catch every word
-  mediaRecorder.start(100);
 
   document.getElementById("startBtn").disabled = true;
   document.getElementById("stopBtn").disabled = false;
-  
-  lastTime = performance.now();
-  loop();
-}
-
-function loop() {
-  if (!stream) return;
-  const now = performance.now();
-  const delta = now - lastTime;
-  lastTime = now;
-
-  analyser.getByteTimeDomainData(dataArray);
-  let sum = 0;
-  for (let i = 0; i < dataArray.length; i++) {
-    let val = (dataArray[i] - 128) / 128;
-    sum += val * val;
-  }
-  let rms = Math.sqrt(sum / dataArray.length);
-
-  document.getElementById("meter-fill").style.width = Math.min(rms * 500, 100) + "%";
-
-  if (rms > threshold) {
-    isSpeaking = true;
-    accumulatedTime += delta;
-    document.getElementById("status-text").innerText = "RECORDING VOICE...";
-    document.getElementById("timer").style.color = "#00f7ff";
-  } else {
-    isSpeaking = false;
-    document.getElementById("status-text").innerText = "WAITING...";
-    document.getElementById("timer").style.color = "#333";
-  }
-
-  document.getElementById("timer").innerText = (accumulatedTime / 1000).toFixed(1) + "s";
-  document.getElementById("saveBtn").disabled = (accumulatedTime < 1000);
-
-  requestAnimationFrame(loop);
 }
 
 function generateFile() {
-  if (chunks.length === 0) return;
+  if (leftChannel.length === 0) return;
 
-  // We stop the recorder briefly to finalize the data, then restart it
-  mediaRecorder.onstop = () => {
-    const blob = new Blob(chunks, { type: "audio/webm" });
-    const url = URL.createObjectURL(blob);
-    
-    const card = document.createElement("div");
-    card.className = "recording-card";
-    card.innerHTML = `
-      <div style="color:#00ff88; font-size:0.8rem">LOG: ${new Date().toLocaleTimeString()}</div>
-      <div>Duration: ${(accumulatedTime/1000).toFixed(1)}s</div>
-      <audio controls src="${url}"></audio>
-    `;
-    document.getElementById("recordings").prepend(card);
+  // Flatten the recorded samples
+  const flattened = flattenArray(leftChannel, leftChannel.length * 4096);
+  const wavBlob = createWavBlob(flattened, audioContext.sampleRate);
+  const url = URL.createObjectURL(wavBlob);
 
-    // Reset session
-    chunks = [];
-    accumulatedTime = 0;
-    
-    // Restart if still active
-    if (stream) {
-      mediaRecorder.start(100);
+  const card = document.createElement("div");
+  card.className = "recording-card";
+  card.innerHTML = `
+    <div style="color:#00ff88; font-size:0.8rem">LOG: ${new Date().toLocaleTimeString()}</div>
+    <div>Captured: ${accumulatedTime.toFixed(1)}s</div>
+    <audio controls src="${url}"></audio>
+  `;
+  document.getElementById("recordings").prepend(card);
+
+  // Reset
+  leftChannel = [];
+  accumulatedTime = 0;
+}
+
+// --- WAV ENCODING HELPERS ---
+
+function flattenArray(channelBuffer, recordingLength) {
+  let result = new Float32Array(recordingLength);
+  let offset = 0;
+  for (let i = 0; i < channelBuffer.length; i++) {
+    result.set(channelBuffer[i], offset);
+    offset += channelBuffer[i].length;
+  }
+  return result;
+}
+
+function createWavBlob(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  const writeString = (view, offset, string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
     }
   };
 
-  mediaRecorder.stop();
-}
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 32 + samples.length * 2, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, samples.length * 2, true);
 
-function shutdown() {
-  location.reload();
+  // Write PCM samples
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    let s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
 }
 </script>
 </body>
