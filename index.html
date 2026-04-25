@@ -76,23 +76,59 @@ function setRandomAffirmation() {
     document.getElementById('prompt-display').innerText = `"${currentPrompt}"`;
 }
 function saveNewGoal() {
-    const text = document.getElementById('goalInput').value;
+    const textInput = document.getElementById('goalInput');
+    const text = textInput.value.trim();
+    
     if (!text) return;
-    db.transaction(["goals"], "readwrite").objectStore("goals").add({ text }).oncomplete = () => {
-        document.getElementById('goalInput').value = ""; loadGoalList();
+
+    // 1. Create a transaction
+    const transaction = db.transaction(["goals"], "readwrite");
+    const store = transaction.objectStore("goals");
+    
+    // 2. Add the data
+    const request = store.add({ text: text });
+
+    // 3. IMPORTANT: Wait for the transaction to FINISH before reloading
+    transaction.oncomplete = () => {
+        console.log("Goal saved successfully!");
+        textInput.value = ""; // Clear the input box
+        loadGoalList();      // Refresh the visual list immediately
+    };
+
+    transaction.onerror = (err) => {
+        console.error("Database Error:", err);
     };
 }
+
 function loadGoalList() {
-    const list = document.getElementById('goalList'); list.innerHTML = "";
-    db.transaction("goals").objectStore("goals").openCursor().onsuccess = e => {
+    const list = document.getElementById('goalList');
+    list.innerHTML = ""; // Clear current UI
+
+    // Open a read-only transaction to fetch all goals
+    const transaction = db.transaction(["goals"], "readonly");
+    const store = transaction.objectStore("goals");
+
+    store.openCursor().onsuccess = (e) => {
         const cursor = e.target.result;
         if (cursor) {
-            const item = document.createElement("div"); item.className = "goal-item";
-            item.innerHTML = `<span onclick="setActive('${cursor.value.text}')">${cursor.value.text}</span><span style="color:#f05" onclick="deleteGoal(${cursor.value.id})">×</span>`;
-            list.appendChild(item); cursor.continue();
+            const item = document.createElement("div");
+            item.className = "goal-item";
+            
+            // Create the goal text and the delete 'X'
+            item.innerHTML = `
+                <span onclick="setActive('${cursor.value.text.replace(/'/g, "\\'")}')" style="flex:1;">
+                    ${cursor.value.text}
+                </span>
+                <span style="color:#ff0055; font-weight:bold; padding-left:10px;" 
+                      onclick="deleteGoal(${cursor.value.id})">×</span>
+            `;
+            
+            list.appendChild(item);
+            cursor.continue(); // Move to next item
         }
     };
 }
+
 function setActive(t) { currentPrompt = t; document.getElementById('prompt-display').innerText = `"${t}"`; }
 function deleteGoal(id) { db.transaction(["goals"], "readwrite").objectStore("goals").delete(id).onsuccess = loadGoalList; }
 
