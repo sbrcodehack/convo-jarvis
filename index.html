@@ -2,48 +2,72 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>ConvoJarvis - Pro Edition</title>
+<title>ConvoJarvis - Affirmation Engine</title>
 <style>
     body { background: #050505; color: #00f7ff; text-align: center; font-family: 'Courier New', monospace; padding: 20px; }
     .container { max-width: 500px; margin: auto; border: 1px solid #00f7ff; padding: 20px; box-shadow: 0 0 20px #004c4e; border-radius: 10px; }
-    #timer { font-size: 4rem; color: #fff; margin: 10px 0; }
-    #status-text { font-size: 0.9rem; letter-spacing: 2px; color: #aaa; margin-bottom: 10px; }
-    #meter-container { width: 100%; height: 12px; background: #111; margin: 10px auto; position: relative; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
+    
+    /* Affirmation Display */
+    #prompt-display { 
+        background: #111; padding: 30px; margin: 20px 0; border: 1px dashed #00f7ff; 
+        font-size: 1.4rem; min-height: 80px; display: flex; align-items: center; justify-content: center;
+        transition: 0.3s; color: #fff; text-shadow: 0 0 10px #00f7ff;
+    }
+    
+    /* Goal Input */
+    .goal-input-area { background: #111; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #222; }
+    input[type=text] { 
+        width: 80%; background: #000; border: 1px solid #00f7ff; color: #00f7ff; 
+        padding: 10px; margin-bottom: 10px; border-radius: 4px; outline: none;
+    }
+    
+    #timer { font-size: 3rem; color: #fff; margin: 5px 0; }
+    #status-text { font-size: 0.8rem; letter-spacing: 2px; color: #aaa; margin-bottom: 10px; }
+
+    #meter-container { width: 100%; height: 8px; background: #111; margin: 10px auto; position: relative; border-radius: 4px; overflow: hidden; }
     #meter-fill { height: 100%; width: 0%; background: #00f7ff; }
-    #threshold-line { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff0055; z-index: 2; }
-    .control-panel { background: #111; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #222; }
+
+    .control-panel { background: #111; padding: 10px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #222; }
     input[type=range] { width: 100%; accent-color: #00f7ff; cursor: pointer; }
-    button { padding: 12px 20px; margin: 5px; cursor: pointer; border: 1px solid #00f7ff; background: transparent; color: #00f7ff; font-weight: bold; border-radius: 4px; }
+
+    button { padding: 10px 15px; margin: 5px; cursor: pointer; border: 1px solid #00f7ff; background: transparent; color: #00f7ff; font-weight: bold; border-radius: 4px; }
     button:hover:not(:disabled) { background: #00f7ff; color: #000; }
     button:disabled { border-color: #333; color: #333; opacity: 0.3; }
-    .recording-card { background: #111; padding: 15px; margin: 15px 0; border: 1px solid #333; border-radius: 8px; text-align: left; border-left: 4px solid #00f7ff; }
-    audio { width: 100%; margin-top: 10px; filter: invert(100%) hue-rotate(180deg); }
-    .log-time { color: #00ff88; font-size: 0.8rem; }
+
+    .recording-card { background: #111; padding: 15px; margin: 15px 0; border: 1px solid #333; border-radius: 8px; text-align: left; border-left: 4px solid #00ff88; }
+    .goal-tag { color: #00ff88; font-size: 0.7rem; font-weight: bold; text-transform: uppercase; margin-bottom: 5px; }
+    .goal-text { font-style: italic; color: #ddd; margin-bottom: 10px; display: block; }
+    audio { width: 100%; filter: invert(100%) hue-rotate(180deg); }
 </style>
 </head>
 <body>
 
 <div class="container">
     <h1>CONVO-JARVIS PRO</h1>
-    <div id="status-text">OFFLINE</div>
-    <div id="timer">0.0s</div>
-
-    <div id="meter-container">
-        <div id="threshold-line" style="left: 15%;"></div>
-        <div id="meter-fill"></div>
+    
+    <div class="goal-input-area">
+        <input type="text" id="customGoal" placeholder="Type a custom goal here...">
+        <br>
+        <button onclick="setPrompt('custom')">SET CUSTOM GOAL</button>
+        <button onclick="setPrompt('random')">RANDOM AFFIRMATION</button>
     </div>
 
+    <div id="prompt-display">"Ready to record your future..."</div>
+
+    <div id="status-text">OFFLINE</div>
+    <div id="timer">0.0s</div>
+    <div id="meter-container"><div id="meter-fill"></div></div>
+
     <div class="control-panel">
-        <label style="font-size: 0.7rem;">SENSITIVITY: <span id="sensVal">0.040</span></label>
+        <label style="font-size: 0.6rem;">SENSITIVITY</label>
         <input type="range" id="sensSlider" min="0.010" max="0.200" step="0.005" value="0.040" oninput="updateSensitivity(this.value)">
     </div>
 
     <button id="startBtn" onclick="initSystem()">ACTIVATE</button>
-    <button id="saveBtn" onclick="generateFile()" disabled>💾 GENERATE</button>
+    <button id="saveBtn" onclick="generateFile()" disabled>💾 GENERATE LOG</button>
     <button id="stopBtn" onclick="shutdown()" disabled>⛔ SHUTDOWN</button>
 
     <div id="recordings"></div>
-    <button style="border-color:#ff0055; color:#ff0055; font-size:0.7rem;" onclick="clearDatabase()">WIPE LOCAL STORAGE</button>
 </div>
 
 <script>
@@ -51,23 +75,35 @@ let audioContext, processor, input, stream, db;
 let leftChannel = [];
 let accumulatedTime = 0;
 let threshold = 0.040;
+let currentPrompt = "General Capture";
 
-// --- FEATURE: IndexedDB Persistence ---
+const affirmations = [
+    "I am capable of achieving greatness.",
+    "My focus is sharp and my goals are clear.",
+    "I choose to be confident and full of energy.",
+    "Every challenge is an opportunity to grow.",
+    "I am the architect of my own future."
+];
+
+// IndexedDB Setup
 const request = indexedDB.open("JarvisLogs", 1);
 request.onupgradeneeded = e => {
     db = e.target.result;
     db.createObjectStore("recordings", { keyPath: "id", autoIncrement: true });
 };
-request.onsuccess = e => {
-    db = e.target.result;
-    loadSavedLogs(); // Load history on startup
-};
+request.onsuccess = e => { db = e.target.result; loadSavedLogs(); };
 
-function updateSensitivity(val) {
-    threshold = parseFloat(val);
-    document.getElementById("sensVal").innerText = val;
-    document.getElementById("threshold-line").style.left = (threshold * 500) + "%";
+function setPrompt(type) {
+    if (type === 'custom') {
+        const val = document.getElementById('customGoal').value;
+        currentPrompt = val || "General Capture";
+    } else {
+        currentPrompt = affirmations[Math.floor(Math.random() * affirmations.length)];
+    }
+    document.getElementById('prompt-display').innerText = `"${currentPrompt}"`;
 }
+
+function updateSensitivity(val) { threshold = parseFloat(val); }
 
 async function initSystem() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -83,20 +119,15 @@ async function initSystem() {
         let sum = 0;
         for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
         let rms = Math.sqrt(sum / data.length);
-
         document.getElementById("meter-fill").style.width = Math.min(rms * 500, 100) + "%";
 
-        // --- FEATURE: Auto Silence Trimming with Buffer ---
         if (rms > threshold) {
             leftChannel.push(new Float32Array(data));
             accumulatedTime += (4096 / audioContext.sampleRate);
-            document.getElementById("status-text").innerText = "• CAPTURING •";
-            document.getElementById("status-text").style.color = "#00ff88";
+            document.getElementById("status-text").innerText = "• RECORDING •";
         } else {
-            document.getElementById("status-text").innerText = "MONITORING";
-            document.getElementById("status-text").style.color = "#aaa";
+            document.getElementById("status-text").innerText = "LISTENING";
         }
-
         document.getElementById("timer").innerText = accumulatedTime.toFixed(1) + "s";
         document.getElementById("saveBtn").disabled = (accumulatedTime < 1.0);
     };
@@ -110,21 +141,19 @@ async function generateFile() {
     const flattened = flattenArray(leftChannel, leftChannel.length * 4096);
     const wavBlob = createWavBlob(flattened, audioContext.sampleRate);
     
-    // Save to IndexedDB
     const logEntry = {
         timestamp: new Date().toLocaleString(),
         duration: accumulatedTime.toFixed(1),
-        audioBlob: wavBlob
+        audioBlob: wavBlob,
+        prompt: currentPrompt // Saving the prompt text!
     };
     
     const transaction = db.transaction(["recordings"], "readwrite");
     transaction.objectStore("recordings").add(logEntry);
-    
     renderCard(logEntry, true);
 
     leftChannel = [];
     accumulatedTime = 0;
-    document.getElementById("timer").innerText = "0.0s";
 }
 
 function renderCard(entry, prepend = false) {
@@ -132,8 +161,9 @@ function renderCard(entry, prepend = false) {
     const card = document.createElement("div");
     card.className = "recording-card";
     card.innerHTML = `
-        <div class="log-time">${entry.timestamp}</div>
-        <div style="font-size: 0.8rem">Captured: ${entry.duration}s</div>
+        <div class="goal-tag">PROMPT / GOAL</div>
+        <span class="goal-text">"${entry.prompt}"</span>
+        <div style="font-size: 0.6rem; color:#aaa; margin-bottom:5px;">${entry.timestamp} | ${entry.duration}s</div>
         <audio controls src="${url}"></audio>
     `;
     const container = document.getElementById("recordings");
@@ -145,19 +175,8 @@ function loadSavedLogs() {
     const store = transaction.objectStore("recordings");
     store.openCursor(null, 'prev').onsuccess = (e) => {
         const cursor = e.target.result;
-        if (cursor) {
-            renderCard(cursor.value);
-            cursor.continue();
-        }
+        if (cursor) { renderCard(cursor.value); cursor.continue(); }
     };
-}
-
-function clearDatabase() {
-    if(confirm("Erase all logs from browser storage?")) {
-        const transaction = db.transaction(["recordings"], "readwrite");
-        transaction.objectStore("recordings").clear();
-        document.getElementById("recordings").innerHTML = "";
-    }
 }
 
 function shutdown() {
@@ -169,34 +188,21 @@ function shutdown() {
     document.getElementById("status-text").innerText = "OFFLINE";
 }
 
-// --- WAV HELPERS (Same as previous version) ---
-function flattenArray(channelBuffer, recordingLength) {
-    let result = new Float32Array(recordingLength);
-    let offset = 0;
-    for (let i = 0; i < channelBuffer.length; i++) {
-        result.set(channelBuffer[i], offset);
-        offset += channelBuffer[i].length;
-    }
-    return result;
+// --- WAV HELPERS ---
+function flattenArray(chan, len) {
+    let res = new Float32Array(len), offset = 0;
+    for (let i = 0; i < chan.length; i++) { res.set(chan[i], offset); offset += chan[i].length; }
+    return res;
 }
-
-function createWavBlob(samples, sampleRate) {
+function createWavBlob(samples, rate) {
     const buffer = new ArrayBuffer(44 + samples.length * 2);
     const view = new DataView(buffer);
-    const writeString = (v, o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-    writeString(view, 0, 'RIFF');
-    view.setUint32(4, 32 + samples.length * 2, true);
-    writeString(view, 8, 'WAVE');
-    writeString(view, 12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeString(view, 36, 'data');
-    view.setUint32(40, samples.length * 2, true);
+    const writeS = (v, o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    writeS(view, 0, 'RIFF'); view.setUint32(4, 32 + samples.length * 2, true);
+    writeS(view, 8, 'WAVE'); writeS(view, 12, 'fmt '); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, rate, true);
+    view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    writeS(view, 36, 'data'); view.setUint32(40, samples.length * 2, true);
     let offset = 44;
     for (let i = 0; i < samples.length; i++, offset += 2) {
         let s = Math.max(-1, Math.min(1, samples[i]));
