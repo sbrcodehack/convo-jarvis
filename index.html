@@ -2,59 +2,54 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>ConvoJarvis - Multi-Goal Pro</title>
+<title>ConvoJarvis Pro - Logic Update</title>
 <style>
     body { background: #050505; color: #00f7ff; text-align: center; font-family: 'Courier New', monospace; padding: 20px; }
     .container { max-width: 500px; margin: auto; border: 1px solid #00f7ff; padding: 20px; box-shadow: 0 0 20px #004c4e; border-radius: 10px; }
     
-    /* Goal Management UI */
     .goal-manager { background: #111; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #222; }
-    .goal-list { max-height: 120px; overflow-y: auto; text-align: left; margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; }
-    .goal-item { 
-        display: flex; justify-content: space-between; align-items: center;
-        background: #000; padding: 8px; margin-bottom: 5px; border: 1px solid #333; font-size: 0.8rem; cursor: pointer;
-    }
-    .goal-item:hover { border-color: #00f7ff; }
-    .goal-item.active { border-color: #00ff88; box-shadow: inset 0 0 5px #00ff88; }
-    .del-btn { color: #ff0055; cursor: pointer; padding: 0 5px; }
-
-    #prompt-display { 
-        background: #000; padding: 20px; margin: 15px 0; border: 1px dashed #00f7ff; 
-        font-size: 1.2rem; color: #fff; text-shadow: 0 0 8px #00f7ff;
-    }
+    .goal-list { max-height: 100px; overflow-y: auto; text-align: left; margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; }
+    .goal-item { display: flex; justify-content: space-between; background: #000; padding: 8px; margin-bottom: 5px; border: 1px solid #333; font-size: 0.8rem; cursor: pointer; }
+    
+    #prompt-display { background: #000; padding: 20px; margin: 15px 0; border: 1px dashed #00f7ff; font-size: 1.2rem; min-height: 40px; color: #fff; }
 
     input[type=text] { width: 70%; background: #000; border: 1px solid #00f7ff; color: #00f7ff; padding: 8px; outline: none; }
-    button { padding: 8px 12px; cursor: pointer; border: 1px solid #00f7ff; background: transparent; color: #00f7ff; font-weight: bold; border-radius: 4px; font-size: 0.8rem; }
+    button { padding: 10px 15px; margin: 5px; cursor: pointer; border: 1px solid #00f7ff; background: transparent; color: #00f7ff; font-weight: bold; border-radius: 4px; transition: 0.2s; }
     button:hover:not(:disabled) { background: #00f7ff; color: #000; }
     
-    #timer { font-size: 2.5rem; color: #fff; margin: 5px 0; }
-    #meter-container { width: 100%; height: 6px; background: #111; margin: 10px 0; border-radius: 3px; overflow: hidden; }
+    /* State Styling */
+    button:disabled { border-color: #222; color: #333; cursor: not-allowed; opacity: 0.2; }
+    .btn-stop { border-color: #ff0055; color: #ff0055; }
+    .btn-stop:hover:not(:disabled) { background: #ff0055; color: #fff; }
+
+    #timer { font-size: 3.5rem; color: #fff; margin: 5px 0; }
+    #meter-container { width: 100%; height: 8px; background: #111; margin: 10px 0; border-radius: 4px; overflow: hidden; }
     #meter-fill { height: 100%; width: 0%; background: #00f7ff; }
-    
     .recording-card { background: #111; padding: 12px; margin: 10px 0; border-radius: 8px; text-align: left; border-left: 4px solid #00ff88; }
-    audio { width: 100%; height: 35px; margin-top: 8px; filter: invert(100%) hue-rotate(180deg); }
+    audio { width: 100%; filter: invert(100%) hue-rotate(180deg); margin-top: 10px; }
 </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>JARVIS: GOAL VAULT</h1>
+    <h1>JARVIS PRO</h1>
     
     <div class="goal-manager">
-        <input type="text" id="goalInput" placeholder="Enter new goal/affirmation...">
+        <input type="text" id="goalInput" placeholder="Add custom goal...">
         <button onclick="saveNewGoal()">ADD</button>
+        <button onclick="setRandomAffirmation()">RANDOM</button>
         <div class="goal-list" id="goalList"></div>
     </div>
 
-    <div id="prompt-display">"Select a goal to begin..."</div>
+    <div id="prompt-display">"Select or generate a prompt..."</div>
 
     <div id="timer">0.0s</div>
     <div id="meter-container"><div id="meter-fill"></div></div>
 
-    <div style="margin-bottom: 15px;">
+    <div id="main-controls">
         <button id="startBtn" onclick="initSystem()">ACTIVATE</button>
         <button id="saveBtn" onclick="generateFile()" disabled>💾 SAVE LOG</button>
-        <button onclick="location.reload()" style="border-color:#ff0055; color:#ff0055;">OFF</button>
+        <button id="stopBtn" class="btn-stop" onclick="shutdown()" disabled>SHUTDOWN</button>
     </div>
 
     <div id="recordings"></div>
@@ -63,59 +58,57 @@
 <script>
 let audioContext, processor, input, stream, db;
 let leftChannel = [], accumulatedTime = 0, threshold = 0.040;
-let currentPrompt = "General Capture";
+let currentPrompt = "General Log";
 
-// Database Setup with 2 Stores
-const request = indexedDB.open("JarvisProDB", 2);
+// Database
+const request = indexedDB.open("JarvisMultiDB", 1);
 request.onupgradeneeded = e => {
     db = e.target.result;
-    if (!db.objectStoreNames.contains("recordings")) db.createObjectStore("recordings", { keyPath: "id", autoIncrement: true });
-    if (!db.objectStoreNames.contains("goals")) db.createObjectStore("goals", { keyPath: "id", autoIncrement: true });
+    db.createObjectStore("recordings", { keyPath: "id", autoIncrement: true });
+    db.createObjectStore("goals", { keyPath: "id", autoIncrement: true });
 };
 request.onsuccess = e => { db = e.target.result; loadSavedLogs(); loadGoalList(); };
 
-// --- GOAL LOGIC ---
+// --- PROMPT LOGIC ---
+const affirmations = ["I am strong.", "I achieve my goals.", "Success follows my actions.", "I am focused.", "I lead with confidence."];
+function setRandomAffirmation() {
+    currentPrompt = affirmations[Math.floor(Math.random() * affirmations.length)];
+    document.getElementById('prompt-display').innerText = `"${currentPrompt}"`;
+}
 function saveNewGoal() {
     const text = document.getElementById('goalInput').value;
     if (!text) return;
-    const transaction = db.transaction(["goals"], "readwrite");
-    transaction.objectStore("goals").add({ text: text });
-    transaction.oncomplete = () => { document.getElementById('goalInput').value = ""; loadGoalList(); };
+    db.transaction(["goals"], "readwrite").objectStore("goals").add({ text }).oncomplete = () => {
+        document.getElementById('goalInput').value = ""; loadGoalList();
+    };
 }
-
 function loadGoalList() {
-    const list = document.getElementById('goalList');
-    list.innerHTML = "";
+    const list = document.getElementById('goalList'); list.innerHTML = "";
     db.transaction("goals").objectStore("goals").openCursor().onsuccess = e => {
         const cursor = e.target.result;
         if (cursor) {
-            const item = document.createElement("div");
-            item.className = "goal-item";
-            item.innerHTML = `<span onclick="setActiveGoal('${cursor.value.text}')">${cursor.value.text}</span>
-                              <span class="del-btn" onclick="deleteGoal(${cursor.value.id})">×</span>`;
-            list.appendChild(item);
-            cursor.continue();
+            const item = document.createElement("div"); item.className = "goal-item";
+            item.innerHTML = `<span onclick="setActive('${cursor.value.text}')">${cursor.value.text}</span><span style="color:#f05" onclick="deleteGoal(${cursor.value.id})">×</span>`;
+            list.appendChild(item); cursor.continue();
         }
     };
 }
+function setActive(t) { currentPrompt = t; document.getElementById('prompt-display').innerText = `"${t}"`; }
+function deleteGoal(id) { db.transaction(["goals"], "readwrite").objectStore("goals").delete(id).onsuccess = loadGoalList; }
 
-function setActiveGoal(text) {
-    currentPrompt = text;
-    document.getElementById('prompt-display').innerText = `"${text}"`;
-}
-
-function deleteGoal(id) {
-    db.transaction(["goals"], "readwrite").objectStore("goals").delete(id).onsuccess = () => loadGoalList();
-}
-
-// --- RECORDING LOGIC ---
+// --- RECORDING & BUTTON LOGIC ---
 async function initSystem() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioContext = new AudioContext();
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
     input = audioContext.createMediaStreamSource(stream);
     processor = audioContext.createScriptProcessor(4096, 1, 1);
+    
     input.connect(processor);
     processor.connect(audioContext.destination);
+
+    // BUTTON INTERLOCK: Toggle Activate/Shutdown
+    document.getElementById("startBtn").disabled = true;
+    document.getElementById("stopBtn").disabled = false;
 
     processor.onaudioprocess = (e) => {
         const data = e.inputBuffer.getChannelData(0);
@@ -127,10 +120,24 @@ async function initSystem() {
             leftChannel.push(new Float32Array(data));
             accumulatedTime += (4096 / audioContext.sampleRate);
         }
+        
         document.getElementById("timer").innerText = accumulatedTime.toFixed(1) + "s";
+        
+        // CRITERIA: Enable Save only if > 1.0s
         document.getElementById("saveBtn").disabled = (accumulatedTime < 1.0);
     };
-    document.getElementById("startBtn").disabled = true;
+}
+
+function shutdown() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    if (processor) processor.disconnect();
+    if (audioContext) audioContext.close();
+    
+    // BUTTON INTERLOCK: Toggle back
+    document.getElementById("startBtn").disabled = false;
+    document.getElementById("stopBtn").disabled = true;
+    document.getElementById("saveBtn").disabled = true;
+    document.getElementById("meter-fill").style.width = "0%";
 }
 
 async function generateFile() {
@@ -140,28 +147,26 @@ async function generateFile() {
     
     db.transaction(["recordings"], "readwrite").objectStore("recordings").add(logEntry);
     renderCard(logEntry, true);
+    
+    // Reset buffer
     leftChannel = []; accumulatedTime = 0;
+    document.getElementById("timer").innerText = "0.0s";
+    document.getElementById("saveBtn").disabled = true;
 }
 
+// --- RENDERING & WAV ---
 function renderCard(entry, prepend = false) {
     const url = URL.createObjectURL(entry.audioBlob);
-    const card = document.createElement("div");
-    card.className = "recording-card";
-    card.innerHTML = `<div style="color:#00ff88; font-size:0.7rem;">LOGGED: ${entry.prompt}</div>
-                      <div style="font-size:0.6rem; color:#666;">${entry.timestamp} | ${entry.duration}s</div>
-                      <audio controls src="${url}"></audio>`;
+    const card = document.createElement("div"); card.className = "recording-card";
+    card.innerHTML = `<div style="color:#00ff88; font-size:0.7rem;">${entry.prompt}</div><div style="font-size:0.6rem; color:#666;">${entry.timestamp} | ${entry.duration}s</div><audio controls src="${url}"></audio>`;
     const container = document.getElementById("recordings");
     prepend ? container.prepend(card) : container.appendChild(card);
 }
-
 function loadSavedLogs() {
     db.transaction("recordings").objectStore("recordings").openCursor(null, 'prev').onsuccess = e => {
-        const cursor = e.target.result;
-        if (cursor) { renderCard(cursor.value); cursor.continue(); }
+        const cursor = e.target.result; if (cursor) { renderCard(cursor.value); cursor.continue(); }
     };
 }
-
-// --- UTILS ---
 function flattenArray(c, l) { let r = new Float32Array(l), o = 0; for (let i = 0; i < c.length; i++) { r.set(c[i], o); o += c[i].length; } return r; }
 function createWavBlob(s, r) {
     const b = new ArrayBuffer(44 + s.length * 2), v = new DataView(b);
